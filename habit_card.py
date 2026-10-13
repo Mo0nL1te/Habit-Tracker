@@ -141,8 +141,12 @@ class HabitCard(tk.Frame):
         self.update_stats(marked, auto)
 
     def update_stats(self, marked, auto):
-        """Перерисовать строку статистики (учитывает заданное условие)."""
-        streak = longest_streak(self.habit["dates"])
+        """Перерисовать строку статистики (учитывает заданное условие).
+
+        Серия считается по всем зелёным дням (ручные + автозакрытые),
+        а не только по ручным отметкам.
+        """
+        streak = longest_streak(marked)
         auto_txt = f" (из них авто: {len(auto)})" if auto else ""
         self.stats.config(
             text=f"Отмечено дней в месяце: {len(marked)}{auto_txt}"

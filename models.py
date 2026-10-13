@@ -4,8 +4,15 @@ import datetime as dt
 
 
 def longest_streak(dates):
-    """Самая длинная серия подряд идущих отмеченных дней."""
-    days = sorted(dt.date.fromisoformat(d) for d in dates)
+    """Самая длинная серия подряд идущих отмеченных дней.
+
+    Принимает как строки "YYYY-MM-DD", так и объекты dt.date —
+    чтобы серию можно было считать и по автозакрытым дням.
+    """
+    def to_date(d):
+        return d if isinstance(d, dt.date) else dt.date.fromisoformat(d)
+
+    days = sorted(to_date(d) for d in dates)
     best = cur = 0
     prev = None
     for d in days:
