@@ -37,6 +37,24 @@ def get_condition(habit):
     return cond
 
 
+def today_score(habit):
+    """Баллы, набранные за текущий день по таблице квадратиков.
+
+    Считаются квадратики, выполненные сегодня (дата совпадает с текущей),
+    суммируется их вес. Незакрашенные и зафиксированные за прошлые дни
+    квадратики в счётчик не попадают.
+    """
+    cond = habit.get("condition")
+    if not isinstance(cond, dict) or cond.get("type") != "table":
+        return 0
+    today_iso = dt.date.today().isoformat()
+    return sum(
+        cell.get("weight", 1)
+        for cell in cond.get("cells", [])
+        if cell.get("done") and cell.get("date") == today_iso
+    )
+
+
 def get_created_date(habit):
     """Дата создания карточки; для старых привычек — самая ранняя отметка."""
     created_iso = habit.get("created")

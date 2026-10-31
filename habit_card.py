@@ -6,7 +6,7 @@ from tkinter import messagebox, simpledialog
 
 from config import PAD
 from models import (longest_streak, get_condition, get_created_date,
-                    compute_auto_green_days)
+                    compute_auto_green_days, today_score)
 from month_calendar import MonthCalendar
 from condition_panel import ConditionPanel
 
@@ -62,6 +62,10 @@ class HabitCard(tk.Frame):
         # ---- строка статистики ----
         self.stats = tk.Label(self, font=("Arial", 10), fg="#444")
         self.stats.pack(anchor="w")
+
+        # ---- счётчик баллов за сегодня (по таблице квадратиков) ----
+        self.today_label = tk.Label(self, font=("Arial", 9, "bold"), fg="#2e7d32")
+        self.today_label.pack(anchor="w")
 
         # ---- выпадающая снизу панель условия (скрыта по умолчанию) ----
         self.condition_panel = ConditionPanel(
@@ -153,6 +157,15 @@ class HabitCard(tk.Frame):
                  f"   •   Самая длинная серия: {streak} 🔥"
                  + self.condition_hint()
         )
+        # счётчик баллов за сегодня: виден только у привычек с таблицей
+        cond = get_condition(self.habit)
+        if cond["type"] == "table" and cond.get("goal", 0) > 0:
+            score = today_score(self.habit)
+            goal = cond["goal"]
+            state = "✅ план выполнен" if score >= goal else "не хватает {}".format(goal - score)
+            self.today_label.config(text=f"Сегодня: {score}/{goal} баллов — {state}")
+        else:
+            self.today_label.config(text="")
 
     def manual_days(self):
         """Вручную отмеченные дни отображаемого месяца."""
