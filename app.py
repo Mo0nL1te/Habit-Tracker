@@ -6,6 +6,7 @@ from tkinter import ttk, simpledialog
 
 import DataHandler as DH
 from habit_card import HabitCard
+from investments_ui import InvestmentsWindow
 
 
 class HabitTrackerApp(tk.Tk):
@@ -26,6 +27,10 @@ class HabitTrackerApp(tk.Tk):
                  bg="#fafafa").pack(side="left")
         self.nav = tk.Frame(top, bg="#fafafa")
         self.nav.pack(side="right")
+        # кнопка открытия окна инвестиций (портфель + калькулятор)
+        tk.Button(self.nav, text="💰 Инвестиции", font=("Arial", 10, "bold"),
+                  relief="flat", bg="#ff9800", fg="white", padx=10, pady=3,
+                  cursor="hand2", command=self.open_investments).pack(side="right")
 
         # ---- прокручиваемая область с карточками ----
         container = tk.Frame(self, bg="#fafafa")
@@ -74,6 +79,14 @@ class HabitTrackerApp(tk.Tk):
             HabitCard(self.scroll_frame, self, habit).pack(fill="x", pady=6, padx=4)
 
     # ---- действия ----
+    def open_investments(self):
+        """Открыть (или поднять наверх) окно инвестиций."""
+        if hasattr(self, "invest_window") and self.invest_window.winfo_exists():
+            self.invest_window.deiconify()
+            self.invest_window.lift()
+            return
+        self.invest_window = InvestmentsWindow(self)
+
     def add_habit(self):
         name = simpledialog.askstring("Новая привычка", "Название привычки:", parent=self)
         if name and name.strip():
