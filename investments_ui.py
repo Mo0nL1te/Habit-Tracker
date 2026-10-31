@@ -289,16 +289,25 @@ class InvestmentsWindow(tk.Toplevel):
                 text="Не удалось получить историю цен (проверьте интернет)")
             return
         sign = "+" if pct >= 0 else ""
-        messagebox.showinfo(
-            "Доходность портфеля",
-            f"Ожидаемая доходность: {sign}{pct:.1f}% годовых\n\n"
-            "Расчёт по историческим ценам MOEX за 3 года:\n"
-            "среднегодовая доходность каждого актива, взвешенная\n"
-            "по его доле в портфеле (по текущей стоимости).\n\n"
-            "Для облигаций учтён только рост цены, без купонов.",
-            parent=self)
         self.status_label.config(
             text=f"Ожидаемая доходность портфеля: {sign}{pct:.1f}% годовых")
+
+        # подставляем результат в калькулятор сложного процента:
+        # доходность — в поле «Доходность, % годовых»,
+        # стартовая сумма — общая стоимость портфеля
+        self.calc_entries[2].delete(0, "end")
+        self.calc_entries[2].insert(0, f"{pct:g}")
+        total_value = 0
+        for pos in self.data["positions"]:
+            price, _, kind, face = self.quotes.get(
+                pos["ticker"], (None, None, None, None))
+            st = inv.position_stats(pos, price, kind, face)
+            if st["value"]:
+                total_value += st["value"]
+        if total_value > 0:
+            self.calc_entries[0].delete(0, "end")
+            self.calc_entries[0].insert(0, f"{total_value:.0f}")
+            self.calculate()   # сразу показываем итог с новыми данными
 
     def remove_position(self, ticker):
         if messagebox.askyesno("Удалить", f"Удалить позицию {ticker}?", parent=self):
