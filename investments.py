@@ -481,22 +481,43 @@ def index_returns(years=10):
     return result
 
 
+def consensus_rating(annual_return):
+    """Консенсус-маркер актива (аналог рейтинга «Покупать/Держать/
+    Продавать» в брокерских приложениях) по ожидаемой доходности:
+
+    - >= 15% годовых — Покупать;
+    - 5–15% — Держать;
+    - < 5% — Продавать.
+    None, если доходность неизвестна.
+    """
+    if annual_return is None:
+        return None
+    if annual_return >= 12:
+        return "Покупать"
+    if annual_return >= 5:
+        return "Держать"
+    return "Продавать"
+
+
 def portfolio_expected_return(data, years=10):
     """Ожидаемая доходность портфеля по историческим данным.
 
-    Возвращает (by_assets, by_index):
+    Возвращает (by_assets, by_index, per_ticker):
     - by_assets — среднегодовая доходность отдельных бумаг
       (рост цены за `years` лет + дивиденды/купоны), взвешенная
       по доле позиции в портфеле (по текущей стоимости);
     - by_index — справочная оценка по индексам: IMOEX для акций
       и фондов, RGBI для облигаций, в пропорции видов портфеля
-      (ближе к логике «60/40»).
-    Любое из значений может быть None (нет данных).
+      (ближе к логике «60/40»);
+    - per_ticker — {ticker: среднегодовая доходность} для колонки
+      консенсус-маркера.
+    by_assets/by_index могут быть None (нет данных).
     """
     quotes = refresh_positions(data)
     total = 0.0
     weighted = 0.0
     kind_totals = {}   # вид актива -> стоимость в портфеле
+    per_ticker = {}
     for pos in data["positions"]:
         price, _, kind, facevalue = quotes.get(
             pos["ticker"], (None, None, None, None))
@@ -508,6 +529,7 @@ def portfolio_expected_return(data, years=10):
             continue
         r = historical_annual_return(pos["ticker"], years)
         if r is not None:
+            per_ticker[pos["ticker"]] = r
             weighted += value * r
             total += value
         if kind:
@@ -532,7 +554,7 @@ def portfolio_expected_return(data, years=10):
             t += value
         if t > 0:
             by_index = round(w / t, 2)
-    return by_assets, by_index
+    return by_assets, by_index, per_ticker
 
 
 def position_stats(pos, price, kind=None, facevalue=None):

@@ -60,6 +60,7 @@ class InvestmentsWindow(tk.Toplevel):
         self.configure(bg="#fafafa")
         self.data = inv.load_portfolio()
         self.quotes = {}   # "TICKER" -> (price, updated, kind, facevalue)
+        self.expected = {}  # "TICKER" -> среднегодовая доходность (для прогноза)
 
         self._build_portfolio()
         self._build_calculator()
@@ -121,7 +122,7 @@ class InvestmentsWindow(tk.Toplevel):
         for w in self.table.winfo_children():
             w.destroy()
         headers = ["Тикер", "Вид", "Кол-во", "Цена покупки", "Текущая цена",
-                   "Стоимость", "Прибыль/убыток", ""]
+                   "Прогноз", "Стоимость", "Прибыль/убыток", ""]
         for col, h in enumerate(headers):
             tk.Label(self.table, text=h, font=("Arial", 9, "bold"), bg="#fafafa",
                      fg="#555").grid(row=0, column=col, padx=6, sticky="w")
@@ -129,7 +130,7 @@ class InvestmentsWindow(tk.Toplevel):
         if not self.data["positions"]:
             tk.Label(self.table, text="Позиций пока нет — добавьте первую сверху.",
                      font=("Arial", 9), fg="#888", bg="#fafafa").grid(
-                row=1, column=0, columnspan=8, pady=8, sticky="w")
+                row=1, column=0, columnspan=9, pady=8, sticky="w")
             self.pie.draw([])
             return
 
@@ -172,17 +173,25 @@ class InvestmentsWindow(tk.Toplevel):
                 else (f"{price:.2f}" if price is not None else "—")
             tk.Label(self.table, text=price_txt, bg="#fafafa").grid(
                 row=i, column=4, padx=6, sticky="e")
+            # консенсус-маркер: Покупать/Держать/Продавать
+            rating = inv.consensus_rating(self.expected.get(pos["ticker"]))
+            rating_colors = {"Покупать": "#2e7d32",
+                             "Держать": "#f9a825",
+                             "Продавать": "#c62828"}
+            tk.Label(self.table, text=rating or "—", font=("Arial", 8, "bold"),
+                     fg=rating_colors.get(rating, "#999"), bg="#fafafa").grid(
+                row=i, column=5, padx=6, sticky="e")
             value_txt = f"{st['value']:,.0f} ₽".replace(",", " ") if st["value"] else "—"
             tk.Label(self.table, text=value_txt, bg="#fafafa").grid(
-                row=i, column=5, padx=6, sticky="e")
+                row=i, column=6, padx=6, sticky="e")
             if st["pl"] is not None:
                 pl_txt = f"{st['pl']:+,.0f} ₽ ({st['pl_pct']:+.1f}%)".replace(",", " ")
             else:
                 pl_txt = "—"
             tk.Label(self.table, text=pl_txt, fg=color, bg="#fafafa").grid(
-                row=i, column=6, padx=6, sticky="e")
+                row=i, column=7, padx=6, sticky="e")
             del_btn = tk.Label(self.table, text="✕", fg="#999", cursor="hand2")
-            del_btn.grid(row=i, column=7, padx=4)
+            del_btn.grid(row=i, column=8, padx=4)
             del_btn.bind("<Button-1>", lambda e, t=pos["ticker"]: self.remove_position(t))
 
         # итоговая строка
@@ -195,11 +204,11 @@ class InvestmentsWindow(tk.Toplevel):
                                         sticky="w", pady=(6, 0))
             tk.Label(self.table, text=f"{total_value:,.0f} ₽".replace(",", " "),
                      font=("Arial", 9, "bold"), bg="#fafafa").grid(
-                row=r, column=5, sticky="e", pady=(6, 0))
+                row=r, column=6, sticky="e", pady=(6, 0))
             tk.Label(self.table,
                      text=f"{total_pl:+,.0f} ₽ ({total_pct:+.1f}%)".replace(",", " "),
                      font=("Arial", 9, "bold"), fg=color, bg="#fafafa").grid(
-                row=r, column=6, sticky="e", pady=(6, 0))
+                row=r, column=7, sticky="e", pady=(6, 0))
 
         # круговая диаграмма: доли видов активов в портфеле
         shares = sorted(kind_values.items(), key=lambda kv: -kv[1])
@@ -283,16 +292,18 @@ class InvestmentsWindow(tk.Toplevel):
             return
         self.status_label.config(text="Считаю историческую доходность…")
         self.update_idletasks()
-        by_assets, by_index = inv.portfolio_expected_return(self.data, years=10)
+        by_assets, by_index, per_ticker = inv.portfolio_expected_return(self.data, years=10)
         if by_assets is None:
             self.status_label.config(
                 text="Не удалось получить историю цен (проверьте интернет)")
             return
+        self.expected = per_ticker
         sign = "+" if by_assets >= 0 else ""
         msg = f"Ожидаемая доходность портфеля: {sign}{by_assets:.1f}% годовых"
         if by_index is not None:
             msg += f"  •  по индексам (IMOEX/RGBI): {by_index:+.1f}%"
         self.status_label.config(text=msg)
+        self.render_positions()   # обновляем колонку «Прогноз»
 
         # подставляем результат в калькулятор сложного процента:
         # доходность — в поле «Доходность, % годовых»,
@@ -326,6 +337,12 @@ class InvestmentsWindow(tk.Toplevel):
             self.status_label.config(text="Портфель пуст")
             return
         self.quotes = inv.refresh_positions(self.data)
+        # прогноз берём из кэша доходностей (без обращения к сети);
+        # свежие значения появляются после «📈 Доходность портфеля»
+        cache = inv.load_returns_cache()
+        self.expected = {
+            pos["ticker"]: (cache.get(pos["ticker"]) or {}).get("cagr")
+            for pos in self.data["positions"]}
         ok = sum(1 for q in self.quotes.values() if q[0] is not None)
         failed = [t for t, q in self.quotes.items() if q[0] is None]
         msg = f"Обновлено {ok} из {len(self.quotes)}"
