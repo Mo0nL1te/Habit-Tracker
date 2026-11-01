@@ -10,7 +10,8 @@ import urllib.request
 # в пакет DataHandler — файл данных лежит в папке с данными.
 # Реэкспортируем, чтобы вызовы inv.load_portfolio()/inv.save_portfolio()
 # в интерфейсе работали без изменений.
-from DataHandler import load_portfolio, save_portfolio
+from DataHandler import (load_portfolio, save_portfolio,
+                         load_returns_cache, save_returns_cache)
 
 BOND_LIST_CACHE = None   # кэш списка облигаций (запасной путь поиска)
 
@@ -293,16 +294,113 @@ def refresh_positions(data):
 
 
 # ---- расчёты ----
-def historical_annual_return(ticker, years=3):
-    """Среднегодовая доходность инструмента по историческим ценам MOEX.
+RETURNS_CACHE_MAX_AGE = 7   # дней: раз в неделю кэш доходностей обновляется
 
-    Берутся дневные свечи за последние `years` лет и считается CAGR:
-    (последняя цена / первая цена) ** (365.25 / дней) - 1.
-    Возвращает доходность в % годовых или None, если истории нет.
 
-    Для облигаций цены на MOEX — в % от номинала, поэтому CAGR
-    отражает только рост цены; купонные выплаты не учитываются.
+def historical_annual_return(ticker, years=10):
+    """Среднегодовая доходность инструмента (рост цены + дивиденды/купоны).
+
+    Результат кэшируется в DataHandler/returns_cache.json и считается
+    годным RETURNS_CACHE_MAX_AGE дней; активы, которых нет в кэше
+    (новые), пересчитываются с нуля и автоматически добавляются в файл.
     """
+    cache = load_returns_cache()
+    entry = cache.get(ticker)
+    if entry:
+        try:
+            updated = dt.date.fromisoformat(str(entry.get("updated", "")))
+            if (entry.get("years") == years
+                    and (dt.date.today() - updated).days <= RETURNS_CACHE_MAX_AGE):
+                return entry.get("cagr")
+        except (ValueError, TypeError):
+            pass
+    pct = _compute_annual_return(ticker, years)
+    if pct is not None:
+        cache[ticker] = {"cagr": pct,
+                         "updated": dt.date.today().isoformat(),
+                         "years": years}
+        save_returns_cache(cache)
+    return pct
+
+
+def _candles_cagr(board, secid, years):
+    """CAGR по дневным свечам за последние `years` лет."""
+    date_from = (dt.date.today()
+                 - dt.timedelta(days=int(365.25 * years) + 7)).isoformat()
+    url = (f"https://iss.moex.com/iss/engines/{board['engine']}"
+           f"/markets/{board['market']}/boards/{board['boardid']}"
+           f"/securities/{secid}/candles.json"
+           f"?iss.meta=off&iss.only=candles&interval=24&from={date_from}")
+    data = _iss_json(url)
+    rows = data["candles"]["data"]
+    if len(rows) < 2:
+        return None
+    # свеча: open(0), close(1), high(2), low(3), value(4), volume(5),
+    #        begin(6), end(7) — даты приходят строками, парсим их
+    first, last = rows[0][1], rows[-1][1]
+    if not first or not last:
+        return None
+    try:
+        d1 = dt.datetime.strptime(str(rows[0][6])[:10], "%Y-%m-%d")
+        d2 = dt.datetime.strptime(str(rows[-1][7])[:10], "%Y-%m-%d")
+        days = (d2 - d1).days
+    except (ValueError, TypeError):
+        days = int(365.25 * years)   # запасной вариант
+    if days < 30:
+        return None
+    return ((last / first) ** (365.25 / days) - 1) * 100
+
+
+def _dividend_yield(secid, price):
+    """Средняя годовая дивидендная доходность акции за 3 года, %.
+
+    Сумма выплаченных дивидендов за последние ~3 года делится на 3
+    и на текущую цену. Если данные ISS о дивидендах недоступны — 0.
+    """
+    if not price:
+        return 0.0
+    try:
+        url = (f"https://iss.moex.com/iss/securities/{urllib.parse.quote(secid)}"
+               f"/dividends.json?iss.meta=off&iss.only=dividends")
+        data = _iss_json(url)
+        cols = data["dividends"]["columns"]
+        rows = [dict(zip(cols, r)) for r in data["dividends"]["data"]]
+        cutoff = dt.date.today() - dt.timedelta(days=int(365.25 * 3) + 30)
+        paid = 0.0
+        for row in rows:
+            try:
+                d = dt.date.fromisoformat(
+                    str(row.get("registryclosedate", ""))[:10])
+            except ValueError:
+                continue
+            if d >= cutoff:
+                paid += float(row.get("dividend") or 0)
+        return round(paid / 3 / float(price) * 100, 2)
+    except Exception:
+        return 0.0
+
+
+def _coupon_yield(sec_row, price):
+    """Текущая купонная доходность облигации, % годовых.
+
+    Годовой купон (COUPONVALUE × 365 / COUPONPERIOD) делим на цену
+    облигации в деньгах (номинал × цена% / 100).
+    """
+    try:
+        face = float(sec_row.get("FACEVALUE") or 1000)
+        coupon = float(sec_row.get("COUPONVALUE") or 0)
+        period = float(sec_row.get("COUPONPERIOD") or 182)
+        if not coupon or not period:
+            return 0.0
+        money_price = face * float(price or 100.0) / 100
+        annual_coupon = coupon * 365.0 / period
+        return round(annual_coupon / money_price * 100, 2)
+    except (TypeError, ValueError, ZeroDivisionError):
+        return 0.0
+
+
+def _compute_annual_return(ticker, years):
+    """Полная среднегодовая доходность: рост цены + дивиденды/купоны."""
     secid = resolve_ticker(ticker)
     if secid is None:
         return None
@@ -311,60 +409,130 @@ def historical_annual_return(ticker, years=3):
         if not boards:
             return None
         board = next((b for b in boards if b.get("is_primary")), boards[0])
-        date_from = (dt.date.today()
-                    - dt.timedelta(days=int(365.25 * years) + 7)).isoformat()
-        url = (f"https://iss.moex.com/iss/engines/{board['engine']}"
-               f"/markets/{board['market']}/boards/{board['boardid']}"
-               f"/securities/{secid}/candles.json"
-               f"?iss.meta=off&iss.only=candles&interval=24&from={date_from}")
-        data = _iss_json(url)
-        rows = data["candles"]["data"]
-        if len(rows) < 2:
-            return None
-        # свеча: open(0), close(1), high(2), low(3), value(4), volume(5),
-        #        begin(6), end(7) — даты приходят строками, парсим их
-        first, last = rows[0][1], rows[-1][1]
-        if not first or not last:
-            return None
+        kind = _classify(boards, secid)
+        # текущие данные инструмента (цена + купонные параметры)
+        price = None
+        sec_row = {}
         try:
-            d1 = dt.datetime.strptime(str(rows[0][6])[:10], "%Y-%m-%d")
-            d2 = dt.datetime.strptime(str(rows[-1][7])[:10], "%Y-%m-%d")
-            days = (d2 - d1).days
-        except (ValueError, TypeError):
-            days = int(365.25 * years)   # запасной вариант
-        if days < 30:
-            return None
-        return round(((last / first) ** (365.25 / days) - 1) * 100, 2)
+            url = (f"https://iss.moex.com/iss/engines/{board['engine']}"
+                   f"/markets/{board['market']}/boards/{board['boardid']}"
+                   f"/securities/{secid}.json"
+                   f"?iss.meta=off&iss.only=marketdata,securities")
+            data = _iss_json(url)
+            if data["securities"]["data"]:
+                sec_row = dict(zip(data["securities"]["columns"],
+                                   data["securities"]["data"][0]))
+            if data["marketdata"]["data"]:
+                md = dict(zip(data["marketdata"]["columns"],
+                              data["marketdata"]["data"][0]))
+                price = (md.get("LAST") or md.get("MARKETPRICE")
+                         or md.get("LASTTOPREVPRICE"))
+            if price is None:
+                price = sec_row.get("PREVPRICE")
+        except Exception:
+            pass
+        cagr = _candles_cagr(board, secid, years)
+        supplement = 0.0
+        if kind == "Облигации":
+            supplement = _coupon_yield(sec_row, price)
+        elif kind == "Акции":
+            supplement = _dividend_yield(secid, price)
+        if cagr is None:
+            # истории нет (молодой инструмент) — только дивиденды/купон
+            return round(supplement, 2) if supplement else None
+        return round(cagr + supplement, 2)
     except Exception:
         return None
 
 
-def portfolio_expected_return(data, years=3):
+def index_returns(years=10):
+    """Справочная среднегодовая доходность индексов MOEX за years лет.
+
+    IMOEX — индекс акций МосБиржи, RGBI — индекс государственных
+    облигаций. Возвращает {"stocks": %|None, "bonds": %|None};
+    недоступный индекс даёт None и просто не участвует в расчёте.
+    """
+    result = {"stocks": None, "bonds": None}
+    date_from = (dt.date.today()
+                 - dt.timedelta(days=int(365.25 * years) + 7)).isoformat()
+    for key, secid in (("stocks", "IMOEX"), ("bonds", "RGBI")):
+        try:
+            url = ("https://iss.moex.com/iss/statistics/engines/stock"
+                   f"/markets/index/boards/SNDX/securities/{secid}/candles.json"
+                   f"?iss.meta=off&iss.only=candles&interval=24&from={date_from}")
+            data = _iss_json(url)
+            rows = data["candles"]["data"]
+            if len(rows) < 2:
+                continue
+            first, last = rows[0][1], rows[-1][1]
+            if not first or not last:
+                continue
+            try:
+                d1 = dt.datetime.strptime(str(rows[0][6])[:10], "%Y-%m-%d")
+                d2 = dt.datetime.strptime(str(rows[-1][7])[:10], "%Y-%m-%d")
+                days = (d2 - d1).days
+            except (ValueError, TypeError):
+                days = int(365.25 * years)
+            if days < 30:
+                continue
+            result[key] = round(((last / first) ** (365.25 / days) - 1) * 100, 2)
+        except Exception:
+            continue
+    return result
+
+
+def portfolio_expected_return(data, years=10):
     """Ожидаемая доходность портфеля по историческим данным.
 
-    Для каждой позиции берётся её среднегодовая доходность за `years`
-    лет и складывается взвешенно — вес равен доле позиции в портфеле
-    (по текущей стоимости, при отсутствии цены — по вложениям).
-    Возвращает % годовых или None.
+    Возвращает (by_assets, by_index):
+    - by_assets — среднегодовая доходность отдельных бумаг
+      (рост цены за `years` лет + дивиденды/купоны), взвешенная
+      по доле позиции в портфеле (по текущей стоимости);
+    - by_index — справочная оценка по индексам: IMOEX для акций
+      и фондов, RGBI для облигаций, в пропорции видов портфеля
+      (ближе к логике «60/40»).
+    Любое из значений может быть None (нет данных).
     """
     quotes = refresh_positions(data)
     total = 0.0
     weighted = 0.0
+    kind_totals = {}   # вид актива -> стоимость в портфеле
     for pos in data["positions"]:
         price, _, kind, facevalue = quotes.get(
             pos["ticker"], (None, None, None, None))
+        if not kind:
+            kind = pos.get("kind")
         st = position_stats(pos, price, kind, facevalue)
         value = st["value"] or st["invested"]
         if not value:
             continue
         r = historical_annual_return(pos["ticker"], years)
-        if r is None:
-            continue
-        weighted += value * r
-        total += value
-    if total <= 0:
-        return None
-    return round(weighted / total, 2)
+        if r is not None:
+            weighted += value * r
+            total += value
+        if kind:
+            kind_totals[kind] = kind_totals.get(kind, 0) + value
+    by_assets = round(weighted / total, 2) if total > 0 else None
+
+    # индексная оценка по структуре портфеля
+    by_index = None
+    if kind_totals:
+        idx = index_returns(years)
+        t = w = 0.0
+        for kind, value in kind_totals.items():
+            if kind in ("Акции", "ETF/фонды"):
+                ref = idx["stocks"]
+            elif kind == "Облигации":
+                ref = idx["bonds"]
+            else:
+                ref = None
+            if ref is None:
+                continue
+            w += value * ref
+            t += value
+        if t > 0:
+            by_index = round(w / t, 2)
+    return by_assets, by_index
 
 
 def position_stats(pos, price, kind=None, facevalue=None):

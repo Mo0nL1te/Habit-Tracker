@@ -283,20 +283,22 @@ class InvestmentsWindow(tk.Toplevel):
             return
         self.status_label.config(text="Считаю историческую доходность…")
         self.update_idletasks()
-        pct = inv.portfolio_expected_return(self.data, years=3)
-        if pct is None:
+        by_assets, by_index = inv.portfolio_expected_return(self.data, years=10)
+        if by_assets is None:
             self.status_label.config(
                 text="Не удалось получить историю цен (проверьте интернет)")
             return
-        sign = "+" if pct >= 0 else ""
-        self.status_label.config(
-            text=f"Ожидаемая доходность портфеля: {sign}{pct:.1f}% годовых")
+        sign = "+" if by_assets >= 0 else ""
+        msg = f"Ожидаемая доходность портфеля: {sign}{by_assets:.1f}% годовых"
+        if by_index is not None:
+            msg += f"  •  по индексам (IMOEX/RGBI): {by_index:+.1f}%"
+        self.status_label.config(text=msg)
 
         # подставляем результат в калькулятор сложного процента:
         # доходность — в поле «Доходность, % годовых»,
         # стартовая сумма — общая стоимость портфеля
         self.calc_entries[2].delete(0, "end")
-        self.calc_entries[2].insert(0, f"{pct:g}")
+        self.calc_entries[2].insert(0, f"{by_assets:g}")
         total_value = 0
         for pos in self.data["positions"]:
             price, _, kind, face = self.quotes.get(
