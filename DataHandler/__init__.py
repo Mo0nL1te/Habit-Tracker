@@ -17,6 +17,14 @@ class DataHandler:
         with open(self.DATA_FILE, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
 
+# Дополнение к DataHandler/__init__.py (добавить в конец существующего файла)
+
+# ВАЖНО: это НЕ весь файл __init__.py, а только добавляемый блок.
+# Скопируйте его в конец вашего существующего DataHandler/__init__.py.
+# Импорты os и json уже есть в файле — повторно добавлять не нужно.
+# Файл investments.json лежит в этой же папке DataHandler — путь
+# строится от расположения самого __init__.py, поэтому всегда верный.
+
 # ================= Инвестиционный портфель =================
 
 INVESTMENTS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
@@ -33,6 +41,8 @@ def load_portfolio():
     except (json.JSONDecodeError, OSError):
         data = {"positions": []}
     data.setdefault("positions", [])
+    data.setdefault("realized", [])   # закрытые сделки: прибыль от продаж
+    data.setdefault("history", [])    # все сделки: покупки и продажи
     return data
 
 

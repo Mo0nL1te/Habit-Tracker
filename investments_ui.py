@@ -1,14 +1,10 @@
-# investments_ui.py — окно портфеля: позиции, статусы активов, круговая диаграмма
-
 import tkinter as tk
 from tkinter import messagebox
-
 import investments as inv
 
 
 class PieChart(tk.Canvas):
     """Круговая диаграмма долей активов (tk Canvas, без библиотек)."""
-
     COLORS = ["#4caf50", "#2196f3", "#ff9800", "#9c27b0",
               "#e91e63", "#00bcd4", "#795548", "#607d8b"]
 
@@ -21,6 +17,7 @@ class PieChart(tk.Canvas):
     def draw(self, shares):
         """shares: список [(вид актива, стоимость ₽)] без нулевых."""
         self.delete("all")
+        self.config(width=self.w, height=self.h + 90)
         total = sum(v for _, v in shares)
         if total <= 0:
             self.create_text(self.w // 2, self.h // 2, text="Нет данных.\n"
@@ -37,7 +34,6 @@ class PieChart(tk.Canvas):
                             start=start, extent=extent, fill=color,
                             outline="white", width=2, style="pieslice")
             start += extent
-        # легенда под диаграммой
         y = self.h + 10
         for i, (label, value) in enumerate(shares):
             color = self.COLORS[i % len(self.COLORS)]
@@ -47,6 +43,12 @@ class PieChart(tk.Canvas):
                              text=f"{label}: {pct:.1f}%"
                                   f" ({value:,.0f} ₽)".replace(",", " "))
             y += 16
+        # холст подстраивается под содержимое: легенда может быть
+        # шире и длиннее самой диаграммы — иначе она обрезается
+        bbox = self.bbox("all")
+        if bbox:
+            self.config(width=max(self.w, bbox[2] + 8),
+                        height=max(self.h + 90, bbox[3] + 8))
 
 
 class InvestmentsWindow(tk.Toplevel):
@@ -56,25 +58,22 @@ class InvestmentsWindow(tk.Toplevel):
     def __init__(self, master):
         super().__init__(master)
         self.title("Инвестиции")
-        self.geometry("980x680")
         self.configure(bg="#fafafa")
         self.data = inv.load_portfolio()
         self.quotes = {}   # "TICKER" -> (price, updated, kind, facevalue)
         self.expected = {}  # "TICKER" -> среднегодовая доходность (для прогноза)
-
+        self.tax_pct = 13
+        self.inflation_pct = 8
         self._build_portfolio()
         self._build_calculator()
         self.render_positions()
-        # сразу обновляем информацию по всем активам при открытии окна
+        self._fit_window_size()
         self.after(100, self.refresh_quotes)
 
-    # ================= портфель =================
     def _build_portfolio(self):
         pf = tk.LabelFrame(self, text=" Портфель ", font=("Arial", 10, "bold"),
                            bg="#fafafa", fg="#444")
         pf.pack(fill="both", expand=True, padx=10, pady=(10, 5))
-
-        # строка добавления позиции
         add_row = tk.Frame(pf, bg="#fafafa")
         add_row.pack(fill="x", padx=8, pady=6)
         tk.Label(add_row, text="Тикер:", bg="#fafafa").pack(side="left")
@@ -91,8 +90,6 @@ class InvestmentsWindow(tk.Toplevel):
                   command=self.add_position).pack(side="left")
         tk.Label(add_row, text="SBER, GAZP, LKOH или ОФЗ 26245", fg="#999",
                  font=("Arial", 8), bg="#fafafa").pack(side="left", padx=(8, 0))
-
-        # контент: таблица слева + круговая диаграмма справа
         content = tk.Frame(pf, bg="#fafafa")
         content.pack(fill="both", expand=True, padx=8, pady=(0, 4))
         self.table = tk.Frame(content, bg="#fafafa")
@@ -103,8 +100,6 @@ class InvestmentsWindow(tk.Toplevel):
                  bg="#fafafa", fg="#555").pack()
         self.pie = PieChart(pie_col, width=200, height=200)
         self.pie.pack()
-
-        # кнопка обновления статусов активов
         btn_row = tk.Frame(pf, bg="#fafafa")
         btn_row.pack(fill="x", padx=8, pady=(4, 8))
         tk.Button(btn_row, text="⟳ Обновить статусы активов", font=("Arial", 10, "bold"),
@@ -117,23 +112,95 @@ class InvestmentsWindow(tk.Toplevel):
         self.status_label = tk.Label(btn_row, text="", fg="#666", bg="#fafafa",
                                      font=("Arial", 9))
         self.status_label.pack(side="left", padx=10)
+        self.selected_ticker = None
+        bottom = tk.Frame(pf, bg="#fafafa")
+        bottom.pack(fill="x", padx=8, pady=(2, 6))
+        self.info_frame = tk.LabelFrame(bottom, text=" Актив ",
+                                        font=("Arial", 9, "bold"),
+                                        bg="#fafafa", fg="#444")
+        self.info_frame.pack(side="left", fill="both", expand=True)
+        self.info_title = tk.Label(self.info_frame, text="", font=("Arial", 9, "bold"),
+                                   bg="#fafafa")
+        self.info_title.pack(anchor="w", padx=8, pady=(2, 0))
+        self.info_history = tk.Frame(self.info_frame, bg="#fafafa")
+        self.info_history.pack(fill="x", padx=8, pady=2)
+        trade_row = tk.Frame(self.info_frame, bg="#fafafa")
+        trade_row.pack(fill="x", padx=8, pady=(0, 6))
+        tk.Label(trade_row, text="Кол-во:", font=("Arial", 8),
+                 bg="#fafafa").pack(side="left")
+        self.trade_qty = tk.Entry(trade_row, width=7)
+        self.trade_qty.pack(side="left", padx=(3, 10))
+        tk.Label(trade_row, text="Цена:", font=("Arial", 8),
+                 bg="#fafafa").pack(side="left")
+        self.trade_price = tk.Entry(trade_row, width=9)
+        self.trade_price.pack(side="left", padx=(3, 12))
+        tk.Button(trade_row, text="Купить", font=("Arial", 9, "bold"), relief="flat",
+                  bg="#4caf50", fg="white", padx=10, cursor="hand2",
+                  command=self.info_buy).pack(side="left", padx=(0, 6))
+        tk.Button(trade_row, text="Продать", font=("Arial", 9, "bold"), relief="flat",
+                  bg="#f57c00", fg="white", padx=10, cursor="hand2",
+                  command=self.info_sell).pack(side="left")
+        self.info_hint = tk.Label(self.info_frame,
+                 text="Кликните по тикеру в таблице, чтобы увидеть историю сделок",
+                 font=("Arial", 8), fg="#999", bg="#fafafa")
+        self.info_hint.pack(anchor="w", padx=8, pady=2)
+        self.passive_frame = tk.LabelFrame(bottom, text=" Пассивный доход ",
+                                           font=("Arial", 9, "bold"),
+                                           bg="#fafafa", fg="#9c27b0")
+        self.passive_frame.pack(side="right", fill="y", padx=(10, 0))
+        self.passive_labels = {}
+        for label, key in (("Доход за год:", "gross"),
+                           ("После НДФЛ:", "net"),
+                           ("В месяц:", "month"),
+                           ("С учётом инфляции:", "real")):
+            row_f = tk.Frame(self.passive_frame, bg="#fafafa")
+            row_f.pack(fill="x", padx=8)
+            tk.Label(row_f, text=label, font=("Arial", 8), fg="#666",
+                     bg="#fafafa").pack(side="left")
+            self.passive_labels[key] = tk.Label(row_f, font=("Arial", 8, "bold"),
+                                                text="…", bg="#fafafa")
+            self.passive_labels[key].pack(side="right")
+        settings = tk.Frame(self.passive_frame, bg="#fafafa")
+        settings.pack(fill="x", padx=8, pady=(2, 6))
+        tk.Label(settings, text="НДФЛ, %:", font=("Arial", 8),
+                 bg="#fafafa").pack(side="left")
+        self.tax_entry = tk.Entry(settings, width=4, font=("Arial", 8))
+        self.tax_entry.insert(0, str(self.tax_pct))
+        self.tax_entry.pack(side="left", padx=(3, 8))
+        tk.Label(settings, text="Инфляция, %:", font=("Arial", 8),
+                 bg="#fafafa").pack(side="left")
+        self.infl_entry = tk.Entry(settings, width=4, font=("Arial", 8))
+        self.infl_entry.insert(0, str(self.inflation_pct))
+        self.infl_entry.pack(side="left", padx=(3, 0))
+        for entry in (self.tax_entry, self.infl_entry):
+            entry.bind("<Return>", lambda _e: self.update_passive())
+            entry.bind("<FocusOut>", lambda _e: self.update_passive())
+
+    def _fit_window_size(self):
+        """Подобрать размер окна по содержимому: число строк таблицы,
+        диаграмма долей, калькулятор. Ширина — не уже 760 px, высота
+        ограничивается экраном. Минимальный размер фиксируется,
+        чтобы при уменьшении портфеля окно не стало слишком мелким."""
+        self.update_idletasks()
+        w = max(self.winfo_reqwidth(), 760)
+        h = min(self.winfo_reqheight(), self.winfo_screenheight() - 120)
+        self.geometry(f"{w}x{h}")
+        self.minsize(w, 400)
 
     def render_positions(self):
         for w in self.table.winfo_children():
             w.destroy()
         headers = ["Тикер", "Вид", "Кол-во", "Цена покупки", "Текущая цена",
-                   "Прогноз", "Стоимость", "Прибыль/убыток", ""]
+                   "Прогноз", "Стоимость", "Прибыль/убыток"]
         for col, h in enumerate(headers):
             tk.Label(self.table, text=h, font=("Arial", 9, "bold"), bg="#fafafa",
                      fg="#555").grid(row=0, column=col, padx=6, sticky="w")
-
         if not self.data["positions"]:
             tk.Label(self.table, text="Позиций пока нет — добавьте первую сверху.",
                      font=("Arial", 9), fg="#888", bg="#fafafa").grid(
-                row=1, column=0, columnspan=9, pady=8, sticky="w")
+                row=1, column=0, columnspan=10, pady=8, sticky="w")
             self.pie.draw([])
             return
-
         total_value = total_pl = total_invested = 0
         has_price = False
         kind_values = {}   # вид актива -> стоимость (для круговой диаграммы)
@@ -153,11 +220,12 @@ class InvestmentsWindow(tk.Toplevel):
                     kind_values.get(kind or "Прочее", 0) + st["value"]
             if st["invested"]:
                 total_invested += st["invested"]
-
             display = pos["ticker"]
-            tk.Label(self.table, text=display, font=("Arial", 9, "bold"),
-                     bg="#fafafa").grid(row=i, column=0, padx=6, sticky="w")
-            # ячейка «Вид» — кликом открывается меню выбора вида актива
+            ticker_lbl = tk.Label(self.table, text=display, font=("Arial", 9, "bold"),
+                                  fg="#1565c0", bg="#fafafa", cursor="hand2")
+            ticker_lbl.grid(row=i, column=0, padx=6, sticky="w")
+            ticker_lbl.bind("<Button-1>",
+                            lambda e, t=pos["ticker"]: self.select_asset(t))
             kind_lbl = tk.Label(self.table, text=kind or "—", font=("Arial", 8),
                                 fg="#1565c0", bg="#fafafa", cursor="hand2")
             kind_lbl.grid(row=i, column=1, padx=6, sticky="w")
@@ -173,7 +241,6 @@ class InvestmentsWindow(tk.Toplevel):
                 else (f"{price:.2f}" if price is not None else "—")
             tk.Label(self.table, text=price_txt, bg="#fafafa").grid(
                 row=i, column=4, padx=6, sticky="e")
-            # консенсус-маркер: Покупать/Держать/Продавать
             rating = inv.consensus_rating(self.expected.get(pos["ticker"]))
             rating_colors = {"Покупать": "#2e7d32",
                              "Держать": "#f9a825",
@@ -190,11 +257,6 @@ class InvestmentsWindow(tk.Toplevel):
                 pl_txt = "—"
             tk.Label(self.table, text=pl_txt, fg=color, bg="#fafafa").grid(
                 row=i, column=7, padx=6, sticky="e")
-            del_btn = tk.Label(self.table, text="✕", fg="#999", cursor="hand2")
-            del_btn.grid(row=i, column=8, padx=4)
-            del_btn.bind("<Button-1>", lambda e, t=pos["ticker"]: self.remove_position(t))
-
-        # итоговая строка
         r = len(self.data["positions"]) + 1
         if has_price:
             total_pct = (total_pl / total_invested * 100) if total_invested else 0
@@ -209,12 +271,20 @@ class InvestmentsWindow(tk.Toplevel):
                      text=f"{total_pl:+,.0f} ₽ ({total_pct:+.1f}%)".replace(",", " "),
                      font=("Arial", 9, "bold"), fg=color, bg="#fafafa").grid(
                 row=r, column=7, sticky="e", pady=(6, 0))
-
-        # круговая диаграмма: доли видов активов в портфеле
+        realized = inv.realized_pl_total(self.data)
+        if realized:
+            rcolor = "#2e7d32" if realized >= 0 else "#c62828"
+            tk.Label(self.table, text="Реализованная прибыль (проданные):",
+                     font=("Arial", 9, "bold"), bg="#fafafa",
+                     fg="#555").grid(row=r + 1, column=0, columnspan=7,
+                                     sticky="w", pady=(2, 0))
+            tk.Label(self.table,
+                     text=f"{realized:+,.0f} ₽".replace(",", " "),
+                     font=("Arial", 9, "bold"), fg=rcolor, bg="#fafafa").grid(
+                row=r + 1, column=7, sticky="e", pady=(2, 0))
         shares = sorted(kind_values.items(), key=lambda kv: -kv[1])
         self.pie.draw(shares)
 
-    # ---- действия ----
     def add_position(self):
         try:
             qty = int(self.qty_entry.get().strip())
@@ -230,7 +300,6 @@ class InvestmentsWindow(tk.Toplevel):
                                 "Заполните тикер, количество и цену покупки.",
                                 parent=self)
             return
-        # резолвим пользовательский ввод в код MOEX (SBER, «ОФЗ 26245» и т.д.)
         resolved = inv.resolve_ticker(ticker)
         if resolved is None:
             messagebox.showinfo(
@@ -246,12 +315,11 @@ class InvestmentsWindow(tk.Toplevel):
         self.qty_entry.delete(0, "end")
         self.price_entry.delete(0, "end")
         self.render_positions()
-        # сразу подтягиваем цену нового актива
+        self._fit_window_size()   # строк стало больше — подгоняем окно
         self.after(100, self.refresh_quotes)
 
     def edit_kind(self, ticker):
         """Ручная смена вида актива (клик по ячейке «Вид»).
-
         Выбор сохраняется в investments.json (поле "kind") и сразу
         учитывается: в таблице, в расчёте стоимости (для облигаций —
         через номинал) и на круговой диаграмме. «Авто» сбрасывает
@@ -267,13 +335,12 @@ class InvestmentsWindow(tk.Toplevel):
             inv.save_portfolio(self.data)
             q = self.quotes.get(ticker)
             if q is not None:
+                auto_kind = q[2]
                 # вид в кэше котировок тоже обновляем, чтобы диаграмма
                 # перерисовалась без нового запроса к бирже
-                auto_kind = q[2]
                 self.quotes[ticker] = (q[0], q[1],
                                        new_kind or auto_kind, q[3])
             self.render_positions()
-
         menu = tk.Menu(self, tearoff=0)
         current = pos.get("kind")
         menu.add_command(label="Авто (определить с биржи)" + (
@@ -282,6 +349,42 @@ class InvestmentsWindow(tk.Toplevel):
             menu.add_command(label=k + ("  ✓" if k == current else ""),
                              command=lambda k=k: apply(k))
         menu.tk_popup(self.winfo_pointerx(), self.winfo_pointery())
+
+    def update_passive(self):
+        """Пересчитать блок пассивного дохода в правом нижнем углу:
+        дивиденды и купоны по позициям, НДФЛ, инфляция. Использует
+        уже загруженные котировки (без новых запросов при пересчёте
+        налога/инфляции)."""
+        try:
+            tax = float(self.tax_entry.get().strip().replace(",", "."))
+            infl = float(self.infl_entry.get().strip().replace(",", "."))
+        except ValueError:
+            return
+        self.tax_pct, self.inflation_pct = tax, infl
+        try:
+            nominal, _details = inv.passive_income(self.data, self.quotes)
+        except Exception:
+            nominal = 0.0
+        total_value = 0.0
+        for pos in self.data["positions"]:
+            price, _, kind, facevalue = self.quotes.get(
+                pos["ticker"], (None, None, None, None))
+            if not kind:
+                kind = pos.get("kind")
+            stats = inv.position_stats(pos, price, kind, facevalue)
+            if stats["value"]:
+                total_value += stats["value"]
+        net, real = inv.net_passive_income(nominal, total_value,
+                                           tax, infl)
+
+        def fmt(v):
+            return f"{v:,.0f} ₽".replace(",", " ")
+        self.passive_labels["gross"].config(text=fmt(nominal), fg="#333")
+        self.passive_labels["net"].config(text=fmt(net), fg="#2e7d32")
+        self.passive_labels["month"].config(text=fmt(net / 12), fg="#2e7d32")
+        self.passive_labels["real"].config(
+            text=f"{real:+,.0f} ₽".replace(",", " "),
+            fg="#2e7d32" if real >= 0 else "#c62828")
 
     def calc_portfolio_return(self):
         """Ожидаемая доходность портфеля по историческим ценам MOEX:
@@ -304,10 +407,6 @@ class InvestmentsWindow(tk.Toplevel):
             msg += f"  •  по индексам (IMOEX/RGBI): {by_index:+.1f}%"
         self.status_label.config(text=msg)
         self.render_positions()   # обновляем колонку «Прогноз»
-
-        # подставляем результат в калькулятор сложного процента:
-        # доходность — в поле «Доходность, % годовых»,
-        # стартовая сумма — общая стоимость портфеля
         self.calc_entries[2].delete(0, "end")
         self.calc_entries[2].insert(0, f"{by_assets:g}")
         total_value = 0
@@ -322,12 +421,138 @@ class InvestmentsWindow(tk.Toplevel):
             self.calc_entries[0].insert(0, f"{total_value:.0f}")
             self.calculate()   # сразу показываем итог с новыми данными
 
-    def remove_position(self, ticker):
-        if messagebox.askyesno("Удалить", f"Удалить позицию {ticker}?", parent=self):
-            inv.delete_position(self.data, ticker)
-            inv.save_portfolio(self.data)
+    def select_asset(self, ticker):
+        """Показать внизу информацию об активе: историю покупок/продаж
+        с датами и прибылью/убытком, а также поля для новой сделки."""
+        self.selected_ticker = ticker
+        self.info_hint.pack_forget()
+        pos = next((p for p in self.data["positions"]
+                    if p["ticker"] == ticker), None)
+        q, _, kind, _ = self.quotes.get(ticker, (None, None, None, None))
+        if not kind and pos:
+            kind = pos.get("kind")
+        title = ticker
+        if pos:
+            title += f" — в портфеле {pos['qty']} шт."
+        if kind == "Облигации":
+            title += "  (цены — в % от номинала)"
+        self.info_title.config(text=title)
+        for w in self.info_history.winfo_children():
+            w.destroy()
+        records = inv.asset_history(self.data, ticker)
+        if not records:
+            tk.Label(self.info_history, text="Сделок пока не было.",
+                     font=("Arial", 8), fg="#999", bg="#fafafa").grid(
+                row=0, column=0, sticky="w")
+            return
+        headers = ["Дата", "Действие", "Кол-во", "Цена", "Прибыль/убыток"]
+        for c, h in enumerate(headers):
+            tk.Label(self.info_history, text=h, font=("Arial", 8, "bold"),
+                     fg="#555", bg="#fafafa").grid(row=0, column=c,
+                                                   sticky="w", padx=(0, 14))
+        for r, rec in enumerate(reversed(records), start=1):
+            is_sell = rec.get("action") == "sell"
+            pl = rec.get("pl")
+            if pl is None:
+                pl_txt, pl_color = "—", "#777"
+            else:
+                pl_txt = f"{pl:+,.0f} ₽".replace(",", " ")
+                pl_color = "#2e7d32" if pl >= 0 else "#c62828"
+            tk.Label(self.info_history, text=rec.get("date", ""),
+                     font=("Arial", 8), bg="#fafafa").grid(
+                row=r, column=0, sticky="w", padx=(0, 14))
+            tk.Label(self.info_history,
+                     text="Продажа" if is_sell else "Покупка",
+                     font=("Arial", 8), fg="#f57c00" if is_sell else "#2e7d32",
+                     bg="#fafafa").grid(row=r, column=1, sticky="w",
+                                        padx=(0, 14))
+            tk.Label(self.info_history, text=str(rec.get("qty", "")),
+                     font=("Arial", 8), bg="#fafafa").grid(
+                row=r, column=2, sticky="w", padx=(0, 14))
+            tk.Label(self.info_history,
+                     text=f"{rec.get('price', 0):,.2f}".replace(",", " "),
+                     font=("Arial", 8), bg="#fafafa").grid(
+                row=r, column=3, sticky="w", padx=(0, 14))
+            tk.Label(self.info_history, text=pl_txt, font=("Arial", 8, "bold"),
+                     fg=pl_color, bg="#fafafa").grid(row=r, column=4,
+                                                     sticky="w", padx=(0, 14))
+
+    def _read_trade_inputs(self):
+        """Кол-во и цена из полей панели; (None, None) при ошибке ввода."""
+        try:
+            qty = int(self.trade_qty.get().strip())
+            price = float(self.trade_price.get().strip().replace(",", "."))
+        except ValueError:
+            messagebox.showinfo(
+                "Проверьте ввод",
+                "Количество — целое число, цена — число.\n"
+                "Например: 10 и 296.50", parent=self)
+            return None, None
+        if qty <= 0 or price <= 0:
+            messagebox.showinfo("Проверьте ввод",
+                                "Количество и цена должны быть больше нуля.",
+                                parent=self)
+            return None, None
+        return qty, price
+
+    def info_buy(self):
+        """Купить выбранный актив: кол-во и цена из полей внизу."""
+        if not self.selected_ticker:
+            messagebox.showinfo("Выберите актив",
+                                "Сначала кликните по тикеру в таблице.",
+                                parent=self)
+            return
+        qty, price = self._read_trade_inputs()
+        if qty is None:
+            return
+        inv.add_position(self.data, self.selected_ticker, qty, price)
+        inv.save_portfolio(self.data)
+        self.trade_qty.delete(0, "end")
+        self.trade_price.delete(0, "end")
+        self.render_positions()
+        self.select_asset(self.selected_ticker)   # обновляем историю
+        self._fit_window_size()
+        self.after(100, self.refresh_quotes)
+
+    def info_sell(self):
+        """Продать выбранный актив: кол-во и цена из полей внизу."""
+        ticker = self.selected_ticker
+        if not ticker:
+            messagebox.showinfo("Выберите актив",
+                                "Сначала кликните по тикеру в таблице.",
+                                parent=self)
+            return
+        pos = next((p for p in self.data["positions"]
+                    if p["ticker"] == ticker), None)
+        if pos is None:
+            messagebox.showinfo("Нет актива", f"{ticker} нет в портфеле.",
+                                parent=self)
+            return
+        qty, price = self._read_trade_inputs()
+        if qty is None:
+            return
+        if qty > pos["qty"]:
+            messagebox.showinfo(
+                "Проверьте ввод",
+                f"В портфеле только {pos['qty']} шт. {ticker}.",
+                parent=self)
+            return
+        q, _, kind, face = self.quotes.get(ticker, (None, None, None, None))
+        if not kind:
+            kind = pos.get("kind")
+        inv.sell_position(self.data, ticker, qty, price, kind, face)
+        inv.save_portfolio(self.data)
+        self.trade_qty.delete(0, "end")
+        self.trade_price.delete(0, "end")
+        if pos["qty"] - qty <= 0:
+            # продано всё — позиция удалена, чистим кэши
             self.quotes.pop(ticker, None)
-            self.render_positions()
+            self.expected.pop(ticker, None)
+        self.render_positions()
+        if pos["qty"] - qty > 0:
+            self.select_asset(ticker)
+        self._fit_window_size()
+        self.after(100, self.refresh_quotes)
 
     def refresh_quotes(self):
         """Обновить статусы всех активов: цены MOEX + прибыль/убыток + диаграмма."""
@@ -350,13 +575,13 @@ class InvestmentsWindow(tk.Toplevel):
             msg += f" (не найдены: {', '.join(failed)})"
         self.status_label.config(text=msg)
         self.render_positions()
+        self._fit_window_size()
+        self.update_passive()
 
-    # ================= калькулятор сложного процента =================
     def _build_calculator(self):
         calc = tk.LabelFrame(self, text=" Калькулятор сложного процента ",
                              font=("Arial", 10, "bold"), bg="#fafafa", fg="#444")
         calc.pack(fill="x", padx=10, pady=(5, 10))
-
         row = tk.Frame(calc, bg="#fafafa")
         row.pack(fill="x", padx=8, pady=6)
         fields = [("Стартовая сумма, ₽", "100000"),
@@ -374,7 +599,6 @@ class InvestmentsWindow(tk.Toplevel):
             entry.bind("<Return>", lambda e: self.calculate())
             entry.pack()
             self.calc_entries.append(entry)
-
         btn_row = tk.Frame(calc, bg="#fafafa")
         btn_row.pack(fill="x", padx=8, pady=(0, 8))
         tk.Button(btn_row, text="Рассчитать", font=("Arial", 9, "bold"),
@@ -383,6 +607,9 @@ class InvestmentsWindow(tk.Toplevel):
         self.calc_result = tk.Label(btn_row, text="", font=("Arial", 10),
                                     bg="#fafafa", fg="#2e7d32")
         self.calc_result.pack(side="left", padx=12)
+        self.calc_passive = tk.Label(calc, text="", font=("Arial", 9),
+                                     bg="#fafafa", fg="#6a1b9a")
+        self.calc_passive.pack(anchor="w", padx=8, pady=(0, 6))
 
     def calculate(self):
         try:
@@ -404,4 +631,15 @@ class InvestmentsWindow(tk.Toplevel):
             text=f"Через {years_txt} г.: {final:,.0f} ₽".replace(",", " ")
                  + f"   •   вложено: {invested:,.0f} ₽".replace(",", " ")
                  + f"   •   заработано: {earned:,.0f} ₽".replace(",", " ")
+        )
+        gross = final * rate / 100
+        # пассивный доход с итоговой суммы: капитал final за год
+        # приносит доход по ставке калькулятора; вычитаем налог
+        # и учитываем покупательную способность (инфляцию)
+        net, real = inv.net_passive_income(gross, final,
+                                           self.tax_pct, self.inflation_pct)
+        self.calc_passive.config(
+            text=(f"Пассивный доход с итоговой суммы: {net:,.0f} ₽/год "
+                  f"после НДФЛ; с учётом инфляции — {real:,.0f} ₽"
+                  ).replace(",", " ")
         )
