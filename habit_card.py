@@ -1,9 +1,6 @@
-# habit_card.py — карточка привычки: шапка, календарь, статистика, панель условия
-
 import datetime as dt
 import tkinter as tk
 from tkinter import messagebox, simpledialog
-
 from config import PAD
 from models import (longest_streak, get_condition, get_created_date,
                     compute_auto_green_days, today_score)
@@ -13,7 +10,6 @@ from condition_panel import ConditionPanel
 
 class HabitCard(tk.Frame):
     """Карточка одной привычки.
-
     Компонует MonthCalendar и ConditionPanel. Панели и календарю данные
     не передаются «сверху вниз» насильно: панель сообщает об изменениях
     через колбэк on_condition_change, календарь — через on_day_click.
@@ -23,16 +19,12 @@ class HabitCard(tk.Frame):
         super().__init__(master, bd=1, relief="solid", padx=PAD, pady=PAD)
         self.app = app
         self.habit = habit
-
-        # ---- шапка ----
         header = tk.Frame(self)
         header.pack(fill="x")
-        # имя привычки: двойной клик по нему открывает редактирование
         self.name_label = tk.Label(header, text=habit["name"],
                                    font=("Arial", 12, "bold"), cursor="xterm")
         self.name_label.pack(side="left")
         self.name_label.bind("<Double-Button-1>", self.rename_habit)
-        # дата создания карточки (или первая известная отметка для старых)
         created = get_created_date(habit)
         if created:
             tk.Label(header, text=f"с {created.strftime('%d.%m.%Y')}",
@@ -41,42 +33,29 @@ class HabitCard(tk.Frame):
                              font=("Arial", 10))
         edit_hint.pack(side="left", padx=(6, 0))
         edit_hint.bind("<Button-1>", self.rename_habit)
-
         del_btn = tk.Label(header, text="✕", fg="#999", cursor="hand2", font=("Arial", 11))
         del_btn.pack(side="right")
         del_btn.bind("<Button-1>", self.delete_habit)
-
-        # стрелочка раскрытия панели дополнительного условия
         self.expanded = False
         self.arrow_btn = tk.Label(header, text="▾", fg="#666", cursor="hand2",
                                   font=("Arial", 11), width=2)
         self.arrow_btn.pack(side="right", padx=(0, 4))
         self.arrow_btn.bind("<Button-1>", self.toggle_extra)
-
-        # ---- календарь месяца ----
         self.year = self.app.year
         self.month = self.app.month
         self.calendar = MonthCalendar(self)
         self.calendar.pack(fill="x", pady=(6, 2))
-
-        # ---- строка статистики ----
         self.stats = tk.Label(self, font=("Arial", 10), fg="#444")
         self.stats.pack(anchor="w")
-
-        # ---- счётчик баллов за сегодня (по таблице квадратиков) ----
         self.today_label = tk.Label(self, font=("Arial", 9, "bold"), fg="#2e7d32")
         self.today_label.pack(anchor="w")
-
-        # ---- выпадающая снизу панель условия (скрыта по умолчанию) ----
         self.condition_panel = ConditionPanel(
             self, habit,
             on_change=self.on_condition_change,
             preserve_scroll=self._run_preserving_scroll,
         )
-
         self.draw_month()
 
-    # ---- связь с панелью условия ----
     def on_condition_change(self):
         """Данные условия изменились: сохранить и перерисовать календарь."""
         self.app.save()
@@ -98,7 +77,6 @@ class HabitCard(tk.Frame):
             self.condition_panel.pack_forget()    # скрывается
             self.arrow_btn.config(text="▾")
 
-    # ---- действия с карточкой ----
     def rename_habit(self, event=None):
         """Редактирование названия привычки через диалог."""
         new_name = simpledialog.askstring(
@@ -132,7 +110,6 @@ class HabitCard(tk.Frame):
             return f"   •   Список: выполнено {done}/{len(cond['items'])}"
         return ""  # для таблицы подсказка в основной карточке не показывается
 
-    # ---- отрисовка ----
     def draw_month(self):
         auto = compute_auto_green_days(self.habit, self.year, self.month,
                                        self.app.save)
@@ -146,7 +123,6 @@ class HabitCard(tk.Frame):
 
     def update_stats(self, marked, auto):
         """Перерисовать строку статистики (учитывает заданное условие).
-
         Серия считается по всем зелёным дням (ручные + автозакрытые),
         а не только по ручным отметкам.
         """
@@ -157,7 +133,6 @@ class HabitCard(tk.Frame):
                  f"   •   Самая длинная серия: {streak} 🔥"
                  + self.condition_hint()
         )
-        # счётчик баллов за сегодня: виден только у привычек с таблицей
         cond = get_condition(self.habit)
         if cond["type"] == "table" and cond.get("goal", 0) > 0:
             score = today_score(self.habit)
@@ -176,7 +151,6 @@ class HabitCard(tk.Frame):
             and dt.date.fromisoformat(d).year == self.year
         }
 
-    # ---- клик по дню ----
     def toggle_day(self, day):
         iso = day.isoformat()
         if iso in self.habit["dates"]:

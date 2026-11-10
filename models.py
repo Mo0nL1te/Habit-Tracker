@@ -1,17 +1,14 @@
-# models.py — чистая логика: серии, условия, автозакраска дней
-
 import datetime as dt
 
 
 def longest_streak(dates):
     """Самая длинная серия подряд идущих отмеченных дней.
-
     Принимает как строки "YYYY-MM-DD", так и объекты dt.date —
     чтобы серию можно было считать и по автозакрытым дням.
     """
+
     def to_date(d):
         return d if isinstance(d, dt.date) else dt.date.fromisoformat(d)
-
     days = sorted(to_date(d) for d in dates)
     best = cur = 0
     prev = None
@@ -39,7 +36,6 @@ def get_condition(habit):
 
 def today_score(habit):
     """Баллы, набранные за текущий день по таблице квадратиков.
-
     Считаются квадратики, выполненные сегодня (дата совпадает с текущей),
     суммируется их вес. Незакрашенные и зафиксированные за прошлые дни
     квадратики в счётчик не попадают.
@@ -67,13 +63,11 @@ def get_created_date(habit):
 
 def compute_auto_green_days(habit, year, month, save):
     """Дни месяца (year, month), выполненные по таблице квадратиков.
-
     Правила:
     - любой день с накопленным весом >= цели закрашивается сам;
     - излишек сверх цели (для любого дня) переносится назад:
       вес >= цель*2 — закрашивается ещё и ближайший незаполненный
       предыдущий день, >= цель*3 — два предыдущих, и т.д.
-
     Прошедшие сутки «фиксируются»: автозакрытые дни переносятся в
     habit["dates"] (как ручная отметка), квадратики получают locked=True.
     save — колбэк, который записывает данные на диск после фиксации.
@@ -84,20 +78,15 @@ def compute_auto_green_days(habit, year, month, save):
     goal = cond.get("goal", 0)
     if goal <= 0:
         return set()
-
     per_day = {}  # "YYYY-MM-DD" -> суммарный вес
     for cell in cond.get("cells", []):
         if cell.get("done") and cell.get("date") and not cell.get("locked"):
             per_day[cell["date"]] = per_day.get(cell["date"], 0) + cell.get("weight", 1)
-
-    green = set()  # строки "YYYY-MM-DD"
-
     # 1) каждый день, набравший цель, закрашивается сам
+    green = set()  # строки "YYYY-MM-DD"
     for day, weight in per_day.items():
         if weight >= goal:
             green.add(day)
-
-    # 2) перенос излишка на предыдущие сутки — для каждого дня, набравшего цель
     manual = set(habit["dates"])  # вручную заполненные не трогаем
     # граница переноса: дата создания привычки, а если её нет —
     # самая ранняя отметка или 30 дней назад
@@ -105,6 +94,7 @@ def compute_auto_green_days(habit, year, month, save):
         min(habit["dates"]) if habit["dates"]
         else (dt.date.today() - dt.timedelta(days=30)).isoformat()
     )
+    # 2) перенос излишка на предыдущие сутки — для каждого дня, набравшего цель;
     # обрабатываем дни от свежих к старым, чтобы излишек более
     # позднего дня не «перепрыгивал» через закрытые более старые
     for day in sorted(per_day, reverse=True):
@@ -119,9 +109,8 @@ def compute_auto_green_days(habit, year, month, save):
                 green.add(prev_iso)
                 extra_days -= 1
             prev -= dt.timedelta(days=1)
-
     # 3) фиксация прошедших суток: автозакрытые дни до вчерашнего включительно
-    #    переносятся в dates — больше не пересчитываются и выглядят как ручная отметка
+    # переносятся в dates — больше не пересчитываются и выглядят как ручная отметка
     yesterday_iso = (dt.date.today() - dt.timedelta(days=1)).isoformat()
     to_fix = [d for d in green if d <= yesterday_iso and d not in manual]
     if to_fix:
@@ -132,8 +121,6 @@ def compute_auto_green_days(habit, year, month, save):
             if cell.get("done") and cell.get("date") in to_fix:
                 cell["locked"] = True
         save()
-
-    # фильтруем по отображаемому месяцу
     return {
         dt.date.fromisoformat(d)
         for d in green

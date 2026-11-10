@@ -1,21 +1,16 @@
-# month_calendar.py — виджет календаря месяца (недели — строки, дни — квадраты)
-
 import calendar
 import tkinter as tk
-
 from config import GAP, WEEKDAYS, MONTHS_RU
 
 
 class MonthCalendar(tk.Frame):
     """Календарь одного месяца. Ничего не знает о привычках:
-
     отрисовку запускает draw(), данные (отмеченные/авто дни, дата
     создания) передаются параметрами, клики уходят в on_day_click.
     """
 
     def draw(self, year, month, marked, auto_days, created, on_day_click):
         """Перерисовать месяц.
-
         marked          — множество отмеченных дней (dt.date);
         auto_days       — подмножество marked, закрытое автоматически
                           (закрашивается светлее);
@@ -25,21 +20,17 @@ class MonthCalendar(tk.Frame):
         """
         for w in self.winfo_children():
             w.destroy()
-
         tk.Label(self, text=f"{MONTHS_RU[month - 1]} {year}",
                  font=("Arial", 10, "bold")).grid(
             row=0, column=0, columnspan=7, sticky="w", pady=(0, 4))
-
         for col, name in enumerate(WEEKDAYS):
             tk.Label(self, text=name, font=("Arial", 8), fg="#666").grid(
                 row=1, column=col, padx=GAP, sticky="w")
-
         cal = calendar.Calendar(firstweekday=0)  # неделя с понедельника
         row = 2
         for week in cal.monthdatescalendar(year, month):
             for col, day in enumerate(week):
                 is_current_month = day.month == month
-                # дни до создания карточки — серые и некликабельные
                 is_before_creation = (
                     created is not None and is_current_month and day < created
                 )
