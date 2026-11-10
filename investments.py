@@ -801,3 +801,139 @@ def compound_interest(initial, monthly, annual_rate, years):
         final = initial * growth + monthly * (growth - 1) / r
     invested = initial + monthly * n
     return final, invested, final - invested
+
+
+# --- Тактика «трёх столбов» (50 / 25 / 25) ---
+# Целевые доли: рублёвый столб 50% (40% акции четырёх секторов
+# по 10% + 10% денежный рынок AKMM), валютный 25% (замещающие или
+# юаневые облигации), золотой 25% (золото на Мосбирже).
+PILLAR_TARGETS = {"ruble": 50, "currency": 25, "gold": 25}
+PILLAR_NAMES = {"ruble": "Рублёвый", "currency": "Валютный",
+                "gold": "Золотой"}
+
+# золото на Мосбирже: фонды и тикеры
+GOLD_TICKERS = {"TGLD", "GLD", "GOLD", "GOLDU", "GLDRUB", "GOLDRUB"}
+# денежный рынок (фонды ликвидности) — часть рублёвого столба
+MONEY_TICKERS = {"AKMM", "AKME", "LQDT", "SBMM", "AKMEC"}
+# секторы рублёвого столба (4 сектора по 10% + денежный рынок 10%)
+SECTOR_TARGET_PCT = 10
+_STOCK_SECTORS = {
+    "SBER": "Финансы", "SBERP": "Финансы", "VTBR": "Финансы",
+    "TCSG": "Финансы", "AFKS": "Финансы", "MOEX": "Финансы",
+    "GAZP": "Нефтегаз", "LKOH": "Нефтегаз", "ROSN": "Нефтегаз",
+    "NVTK": "Нефтегаз", "TATN": "Нефтегаз", "TATNP": "Нефтегаз",
+    "SNGS": "Нефтегаз", "SNGSP": "Нефтегаз", "UPRO": "Нефтегаз",
+    "YDEX": "Технологии", "MTSS": "Технологии", "T": "Технологии",
+    "RTKM": "Технологии", "SMLT": "Технологии", "OZON": "Технологии",
+    "GMKN": "Металлургия и ритейл", "CHMF": "Металлургия и ритейл",
+    "NLMK": "Металлургия и ритейл", "MAGN": "Металлургия и ритейл",
+    "IRA0": "Металлургия и ритейл",
+    "MGNT": "Металлургия и ритейл", "LENT": "Металлургия и ритейл",
+}
+# облигации: юаневые выпуски ОФЗ идут сериями 292xx
+_YUAN_BOND_PREFIXES = ("SU292",)
+
+
+def auto_pillar(ticker, kind=None):
+    """Автоопределение столба по тикеру/виду. Акции и фонды по
+    умолчанию — рублёвый столб (это топовые российские бумаги);
+    облигации без признаков юаня определить нельзя (замещающие
+    или обычные?) — их столб задаётся вручную полем "pillar"."""
+    t = (ticker or "").upper()
+    if t in GOLD_TICKERS:
+        return "gold"
+    if t in MONEY_TICKERS:
+        return "ruble"
+    # юаневые ОФЗ (серии 292xx) — валютный столб
+    if t.startswith(_YUAN_BOND_PREFIXES):
+        return "currency"
+    if kind != "Облигации":
+        return "ruble"
+    return None
+
+
+def position_pillar(pos, kind=None):
+    """Столб позиции: ручной выбор "pillar" приоритетнее авто."""
+    manual = pos.get("pillar")
+    if manual in PILLAR_TARGETS:
+        return manual
+    return auto_pillar(pos.get("ticker"), kind or pos.get("kind"))
+
+
+def sector_of(pos, pillar, kind=None):
+    """Сектор внутри рублевого столба (для разбивки 4+1 по 10%)."""
+    t = (pos.get("ticker") or "").upper()
+    if t in MONEY_TICKERS:
+        return "Денежный рынок"
+    if pillar == "ruble":
+        return _STOCK_SECTORS.get(t, "Прочее")
+    return None
+
+
+def pillar_allocation(data, quotes=None):
+    """Доли трёх столбов и секторов рублёвого по текущей стоимости.
+    quotes — как в refresh_positions; если цены ещё не загружены,
+    стоимость позиции берётся по цене покупки. Возвращает словарь:
+    {"total": ₽, "pillars": {ключ: {"value": ₽, "pct": %}},
+     "sectors": {сектор: {"value": ₽, "pct": %}},
+     "unclassified": [(тикер, ₽, вид)]}"""
+    total = 0.0
+    pillars = {k: 0.0 for k in PILLAR_TARGETS}
+    sectors = {}
+    unclassified = []
+    for pos in data["positions"]:
+        price, _upd, kind, face = (quotes or {}).get(
+            pos["ticker"], (None, None, None, None))
+        if not kind:
+            kind = pos.get("kind")
+        st = position_stats(pos, price, kind, face)
+        value = st["value"] if st["value"] else (st["invested"] or 0)
+        if not value:
+            continue
+        total += value
+        pillar = position_pillar(pos, kind)
+        if pillar is None:
+            unclassified.append((pos["ticker"], value, kind or "—"))
+            continue
+        pillars[pillar] += value
+        if pillar == "ruble":
+            sec = sector_of(pos, pillar, kind) or "Прочее"
+            sectors[sec] = sectors.get(sec, 0.0) + value
+    out = {"total": total, "pillars": {}, "sectors": {},
+           "unclassified": unclassified}
+    for k, v in pillars.items():
+        out["pillars"][k] = {"value": v,
+                             "pct": (v / total * 100) if total else 0}
+    for s, v in sectors.items():
+        out["sectors"][s] = {"value": v,
+                             "pct": (v / total * 100) if total else 0}
+    return out
+
+
+def deposit_plan(alloc, deposit):
+    """Распределить пополнение по столбам: сначала закрываем
+    недобор до цели пропорционально отклонению, так чтобы после
+    пополнения доли максимально приблизились к 50/25/25.
+    Возвращает {столб: ₽ к докупке}."""
+    total = alloc["total"]
+    if deposit <= 0 or total <= 0:
+        return {k: 0.0 for k in PILLAR_TARGETS}
+    need = {}
+    for k, target in PILLAR_TARGETS.items():
+        # сколько ₽ должно быть в столбе после пополнения
+        want = (total + deposit) * target / 100
+        need[k] = max(0.0, want - alloc["pillars"][k]["value"])
+    shortage = sum(need.values())
+    if shortage <= 0:
+        # все цели достигнуты — докупаем пропорционально целям
+        return {k: deposit * PILLAR_TARGETS[k] / sum(PILLAR_TARGETS.values())
+                for k in PILLAR_TARGETS}
+    # если недобор больше суммы пополнения — делим пропорционально недобору
+    if shortage > deposit:
+        return {k: deposit * v / shortage for k, v in need.items()}
+    # недобор покрывается целиком, остаток — пропорционально целям
+    rest = deposit - shortage
+    plan = dict(need)
+    for k in PILLAR_TARGETS:
+        plan[k] += rest * PILLAR_TARGETS[k] / sum(PILLAR_TARGETS.values())
+    return plan
