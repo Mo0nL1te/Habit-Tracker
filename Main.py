@@ -1,8 +1,5 @@
-# main.py — точка входа: python main.py
-
-from app import HabitTrackerApp
-
+from app import BudgetApp
 if __name__ == "__main__":
-    app = HabitTrackerApp()
-    app.geometry("640x720")
+    app = BudgetApp()
+    app.geometry("720x1020")
     app.mainloop()
