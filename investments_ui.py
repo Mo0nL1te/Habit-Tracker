@@ -312,7 +312,8 @@ class InvestmentsWindow(tk.Toplevel):
                 else f"{pos['buy_price']:.2f}"
             tk.Label(self.table, text=buy_txt, bg="#fafafa").grid(
                 row=i, column=3, padx=6, sticky="e")
-            price_txt = f"{price:.2f} %" if kind == "Облигации" \
+            price_txt = (f"{price:.2f} %" if price is not None else "—") \
+                if kind == "Облигации" \
                 else (f"{price:.2f}" if price is not None else "—")
             tk.Label(self.table, text=price_txt, bg="#fafafa").grid(
                 row=i, column=4, padx=6, sticky="e")

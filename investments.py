@@ -385,6 +385,7 @@ def refresh_positions(data):
             kind = pos["kind"]
         quotes[pos["ticker"]] = (price, updated, kind, facevalue)
     return quotes
+
 RETURNS_CACHE_MAX_AGE = 7   # дней: раз в неделю кэш доходностей обновляется
 
 
@@ -486,7 +487,7 @@ def _smartlab_parse(page):
         if len(cells) < 9:
             continue                       # служебные/чужие таблицы
         ticker, amount, cutoff = (cells[1].strip().upper(),
-                                 _to_float(cells[3]), _to_date(cells[7]))
+                                  _to_float(cells[3]), _to_date(cells[7]))
         # ячейка дивдоходности выглядит как «4,4%» — убираем знак %
         dy = _to_float((cells[4] or "").replace("%", "")) \
             if len(cells) > 4 else None

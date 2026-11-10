@@ -17,16 +17,9 @@ class DataHandler:
         with open(self.DATA_FILE, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
 
-# Дополнение к DataHandler/__init__.py (добавить в конец существующего файла)
-
-# ВАЖНО: это НЕ весь файл __init__.py, а только добавляемый блок.
-# Скопируйте его в конец вашего существующего DataHandler/__init__.py.
-# Импорты os и json уже есть в файле — повторно добавлять не нужно.
-# Файл investments.json лежит в этой же папке DataHandler — путь
-# строится от расположения самого __init__.py, поэтому всегда верный.
-
-# ================= Инвестиционный портфель =================
-
+# Дополнение к DataHandler/__init__.py (добавить в конец существующего файла).
+# ВАЖНО: это НЕ весь файл, а только добавляемый блок; импорты os и json уже есть.
+# Файлы данных лежат рядом с __init__.py — путь строится от его расположения.
 INVESTMENTS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                 "investments.json")
 
@@ -51,13 +44,9 @@ def save_portfolio(data):
     with open(INVESTMENTS_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
-
-# ================= Кэш среднегодовой доходности активов =================
-# Файл returns_cache.json лежит рядом с investments.json и хранит
-# уже посчитанные доходности инструментов, чтобы не пересчитывать
-# их с нуля при каждом открытии окна. Новые активы добавляются
-# в файл автоматически после первого расчёта.
-
+# Кэш среднегодовой доходности: файл рядом с investments.json,
+# хранит уже посчитанные доходности, чтобы не пересчитывать их с нуля
+# при каждом открытии окна.
 RETURNS_CACHE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                   "returns_cache.json")
 
